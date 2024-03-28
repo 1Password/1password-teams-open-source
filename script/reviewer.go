@@ -1,7 +1,18 @@
 package main
 
 import (
+	"fmt"
 	"log"
+)
+
+type Status int
+
+const (
+	Closed Status = iota
+	Approved
+	Reviewing
+	Invalid
+	New
 )
 
 type Reviewer struct {
@@ -19,11 +30,88 @@ func (r *Reviewer) Review() {
 
 	r.application.Parse(r.gitHub.Issue)
 
-	if isTestingIssue() {
-		if r.application.IsValid() {
-			debugMessage("Application has no problems")
+	status := r.getStatus()
+	r.updateLabels(status)
+	r.createComment(status)
+}
+
+func (r *Reviewer) getStatus() Status {
+	if *r.gitHub.Issue.State == "closed" {
+		return Closed
+	} else if r.gitHub.IssueHasLabel(LabelStatusApproved) {
+		return Approved
+	} else if r.gitHub.IssueHasLabel(LabelStatusReviewing) {
+		return Reviewing
+	} else if r.gitHub.IssueHasLabel(LabelStatusInvalid) {
+		return Invalid
+	} else {
+		return New
+	}
+}
+
+func (r *Reviewer) createComment(status Status) {
+	title := ""
+	body := ""
+	details := fmt.Sprintf("<details>\n<summary>Application data...</summary>\n\n```json\n%s\n```\n</details>", r.application.GetData())
+	// TODO: replace FILE_NAME with Application.FileName once available
+	dataPath := fmt.Sprintf("https://github.com/1Password/1password-teams-open-source/blob/main/data/%s", "FILE_NAME")
+
+	if status == Closed {
+		body = "This application is closed and changes will not be reviewed. If you have any questions, contact us at [opensource@1password.com](mailto:opensource@1password.com)."
+	} else if status == Approved {
+		body = fmt.Sprintf("This application has already been approved and changes will not be reviewed. If you would like to modify the details of your application, submit a pull request against the stored [application data](%s). If you have any questions, contact us at [opensource@1password.com](mailto:opensource@1password.com).", dataPath)
+	} else if r.application.IsValid() {
+		if status == Reviewing {
+			title = "### 👍 Application still valid"
+			body = fmt.Sprintf("\n\n%s\n\nWe’ve run our automated pre-checks and your updated application is still valid.", details)
 		} else {
-			debugMessage("Application problems:", r.application.RenderProblems())
+			title = "### ✅ Your application is valid"
+			body = fmt.Sprintf("\n\n%s\n\nThanks for applying! Our automated pre-checks have determined your application is valid. Next step: our team will review your application and may have follow-up questions. You can still make changes to your application and it’ll be re-evaluated.", details)
+		}
+	} else {
+		title = "### ❌ Your application is invalid"
+		body = fmt.Sprintf("\n\n%s\n\nOur automated pre-checks have detected the following problems:\n\n%s\n\nUpdate this issue to correct these problems and we’ll automatically re-evaluate your application.", details, r.application.RenderProblems())
+	}
+
+	r.gitHub.CreateIssueComment(fmt.Sprintf("%s%s", title, body))
+}
+
+func (r *Reviewer) updateLabels(status Status) {
+	if status == Approved || status == Closed {
+		return
+	}
+
+	if r.application.IsValid() {
+		if status == Invalid {
+			if err := r.gitHub.RemoveIssueLabel(LabelStatusInvalid); err != nil {
+				r.printErrorAndExit(
+					fmt.Errorf("could not remove issue label '%s': %s", LabelStatusInvalid, err.Error()),
+				)
+			}
+		}
+
+		if status != Reviewing {
+			if err := r.gitHub.AddIssueLabel(LabelStatusReviewing); err != nil {
+				r.printErrorAndExit(
+					fmt.Errorf("could not add issue label '%s': %s", LabelStatusReviewing, err.Error()),
+				)
+			}
+		}
+	} else {
+		if status != Invalid {
+			if err := r.gitHub.AddIssueLabel(LabelStatusInvalid); err != nil {
+				r.printErrorAndExit(
+					fmt.Errorf("could not add issue label '%s': %s", LabelStatusInvalid, err.Error()),
+				)
+			}
+		}
+
+		if status == Reviewing {
+			if err := r.gitHub.RemoveIssueLabel(LabelStatusReviewing); err != nil {
+				r.printErrorAndExit(
+					fmt.Errorf("could not remove issue label '%s': %s", LabelStatusReviewing, err.Error()),
+				)
+			}
 		}
 	}
 }

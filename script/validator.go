@@ -30,7 +30,7 @@ type ValidationError struct {
 type ValidatorCallback func(string) (bool, string, string)
 
 func (e *ValidationError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Section, e.Message)
+	return fmt.Sprintf("**%s** %s", e.Section, e.Message)
 }
 
 type Validator struct {
@@ -69,11 +69,7 @@ func ParseInput(value string) (bool, string, string) {
 		return true, "", ""
 	}
 
-	return true, value, ""
-}
-
-func ParsePlainString(value string) (bool, string, string) {
-	// strip all formattig, except for newlines
+	// strip all formatting, except for newlines
 	html := blackfriday.Run([]byte(value))
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(html))
 	if err != nil {
@@ -81,6 +77,10 @@ func ParsePlainString(value string) (bool, string, string) {
 	}
 	value = strings.TrimSpace(doc.Text())
 
+	return true, value, ""
+}
+
+func ParsePlainString(value string) (bool, string, string) {
 	if urlRegex.MatchString(value) {
 		return false, value, "cannot contain URLs"
 	}
